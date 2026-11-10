@@ -1,0 +1,7 @@
+# The settings parley-logging reads (format: parley-net's KnownSettings), all system properties.
+# parley.log.level (BaseObject's) also sets the level of loggers outside us.bringardner here.
+
+parley.log.file
+parley.log.fileCount
+parley.log.fileMaxSize
+parley.log.flushInterval
