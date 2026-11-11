@@ -705,8 +705,16 @@ public class ParleyLogger implements System.Logger {
 	 * (a line end, a tab ...) are escaped, so an entry is always one line and valid JSON.
 	 */
 	static void appendJsonText(StringBuilder out, String text) {
-		for(int i = 0, n = text.length(); i < n; i++) {
+		//  Most text needs no escaping: what lies between two characters that do is copied in one piece
+		int start = 0;
+		int n = text.length();
+		for(int i = 0; i < n; i++) {
 			char c = text.charAt(i);
+			if( c >= 0x20 && c != '"' && c != '\\' && c != 0x7f && c != 0x2028 && c != 0x2029 ) {
+				continue;
+			}
+			out.append(text, start, i);
+			start = i + 1;
 			switch (c) {
 			case '"':
 				out.append("\\\"");
@@ -725,17 +733,14 @@ public class ParleyLogger implements System.Logger {
 				break;
 			default:
 				//  Other control characters, and the two Unicode line separators that some JSON readers take as line ends
-				if( c < 0x20 || c == 0x7f || c == 0x2028 || c == 0x2029 ) {
-					out.append("\\u");
-					String hex = Integer.toHexString(c);
-					for(int pad = hex.length(); pad < 4; pad++) {
-						out.append('0');
-					}
-					out.append(hex);
-				} else {
-					out.append(c);
+				out.append("\\u");
+				String hex = Integer.toHexString(c);
+				for(int pad = hex.length(); pad < 4; pad++) {
+					out.append('0');
 				}
+				out.append(hex);
 			}
 		}
+		out.append(text, start, n);
 	}
 }
