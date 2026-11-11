@@ -30,8 +30,8 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.text.MessageFormat;
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.MissingResourceException;
@@ -46,7 +46,7 @@ import us.bringardner.parley.core.util.Durations;
 
 /**
  * Parley's own log writer: a {@link System.Logger} that writes one line an entry
- * ({@code MM-dd-yyyy HH:mm:ss.SSS [thread] LEVEL name - message}, then any stack trace) to System.out,
+ * ({@code yyyy-MM-dd'T'HH:mm:ss.SSS+HH:MM [thread] LEVEL name - message}, then any stack trace) to System.out,
  * System.err or a log file. {@link ParleyLoggerFinder} makes it the JVM's System.Logger, so that
  * BaseObject's logging (and anything else that logs through System.Logger) is written here.
  * <p>
@@ -79,22 +79,35 @@ public class ParleyLogger implements System.Logger {
 	public static final String PROPERTY_LOG_FLUSH_INTERVAL = "parley.log.flushInterval";
 
 	//  DateTimeFormatter is immutable and thread safe, so no locking is required.
-	private static final DateTimeFormatter SECOND_FORMAT = DateTimeFormatter.ofPattern("MM-dd-yyyy HH:mm:ss");
+	private static final DateTimeFormatter SECOND_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+	//  "xxx" is the offset from UTC as +HH:MM (+00:00 for UTC)
+	private static final DateTimeFormatter OFFSET_FORMAT = DateTimeFormatter.ofPattern("xxx");
 
-	/** "MM-dd-yyyy HH:mm:ss" for one second, so only the milliseconds are worked out for each entry. */
+	/**
+	 * The date, time and offset from UTC for one second, so only the milliseconds are worked out for
+	 * each entry. The offset is worked out for each second, so it follows daylight saving time.
+	 */
 	private static final class Stamp {
 		final long second;
+		/** "yyyy-MM-dd'T'HH:mm:ss" */
 		final String text;
+		/** "+HH:MM" */
+		final String offset;
 
 		Stamp(long second) {
 			this.second = second;
-			this.text = SECOND_FORMAT.format(LocalDateTime.ofInstant(Instant.ofEpochSecond(second), ZoneId.systemDefault()));
+			ZonedDateTime time = ZonedDateTime.ofInstant(Instant.ofEpochSecond(second), ZoneId.systemDefault());
+			this.text = SECOND_FORMAT.format(time);
+			this.offset = OFFSET_FORMAT.format(time);
 		}
 	}
 
 	private static volatile Stamp stamp = new Stamp(0);
 
-	/** Appends the time as "MM-dd-yyyy HH:mm:ss.SSS" in the default time zone. */
+	/**
+	 * Appends the time in ISO 8601 form, "yyyy-MM-dd'T'HH:mm:ss.SSS+HH:MM": the default time zone's
+	 * local time with its offset from UTC (2026-11-11T06:52:03.123-05:00).
+	 */
 	static void appendTimestamp(StringBuilder out, long millis) {
 		long second = Math.floorDiv(millis, 1000L);
 		Stamp s = stamp;
@@ -110,7 +123,7 @@ public class ParleyLogger implements System.Logger {
 		if( ms < 10 ) {
 			out.append('0');
 		}
-		out.append(ms);
+		out.append(ms).append(s.offset);
 	}
 
 

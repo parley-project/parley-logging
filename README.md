@@ -53,8 +53,9 @@ System properties, read when a logger is made:
 | `parley.log.fileCount` | How many old log files to keep, 5 by default. With 0 the log file is started again from empty. |
 | `parley.log.flushInterval` | The time between writes to the log file, a duration (`500ms`). The default is 0: every entry is written as soon as it is logged. With a value (100ms to 1s is typical) entries are collected and written together, which is about ten times cheaper for a busy logger. The last entries (up to that long) are lost if the JVM is killed; they are written at a normal exit and by `ParleyLogger.closeLogFiles()`. |
 
-Entries are `MM-dd-yyyy HH:mm:ss.SSS [thread] LEVEL name - message`, then any stack trace, written
-in one piece. Errors and entries with a stack trace go to the error stream (the file, when there is
+Entries are `yyyy-MM-dd'T'HH:mm:ss.SSS+HH:MM [thread] LEVEL name - message`, then any stack trace,
+written in one piece. The time is ISO 8601: the machine's local time with its offset from UTC
+(`2026-11-11T06:52:03.123-05:00`), so logs from machines in different time zones sort and line up. Errors and entries with a stack trace go to the error stream (the file, when there is
 one). A message with parameters is formatted with `java.text.MessageFormat`, as `System.Logger`
 specifies.
 

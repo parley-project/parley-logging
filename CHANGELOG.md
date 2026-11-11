@@ -2,6 +2,12 @@
 
 ## parley-logging 2.0.0 (unreleased)
 
+### Changed (2026-11-11: To-Do 19.6)
+
+- **ISO 8601 time stamp**: an entry starts with `yyyy-MM-dd'T'HH:mm:ss.SSS+HH:MM`, the local time with
+  its offset from UTC (`2026-11-11T06:52:03.123-05:00`), in place of `MM-dd-yyyy HH:mm:ss.SSS` with no
+  zone.
+
 ### Added (2026-11-10: To-Do 19.5)
 
 - **New module**: `ParleyLogger` moved here from parley-core (package `us.bringardner.parley.logging`).
