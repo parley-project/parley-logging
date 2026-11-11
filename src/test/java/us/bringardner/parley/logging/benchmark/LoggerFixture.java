@@ -47,7 +47,13 @@ import us.bringardner.parley.logging.ParleyLogger;
  *     settings for each such message). Only the level check and the debug calls are measured.</li>
  * <li>{@link #JUL}: java.util.logging called directly, at level INFO: what an application with no
  *     System.Logger provider writes with.</li>
+ * <li>{@link #LOG4J}: Log4j 2 called directly (its own API), at level INFO.</li>
+ * <li>{@link #LOGBACK}: Logback called directly (through SLF4J, its API), at level INFO.</li>
  * </ol>
+ * Log4j and Logback are what an application gets behind System.Logger when it includes their bridge
+ * (log4j-jpl, slf4j-jdk-platform-logging) in place of parley-logging. They are called directly here
+ * because a JVM has one System.Logger provider and the benchmark's is parley-logging's; the
+ * BaseObject column shows what BaseObject and System.Logger add in front of a logger.
  * Every logger writes to a file in a new temporary folder with a similar one-line layout. The file is
  * rotated at {@link #MAX_FILE_SIZE} with one old file kept, so a long run can't fill the disk.
  * <p>
@@ -57,7 +63,8 @@ import us.bringardner.parley.logging.ParleyLogger;
  * <li>Batched: entries are collected and written together. ParleyLogger: its parley.log.flushInterval
  *     setting ({@link #FLUSH_INTERVAL_MS}). java.util.logging has no setting for it (its FileHandler
  *     writes every entry), so a FileHandler that leaves the writing to a timer
- *     ({@link BatchedFileHandler}) is used.</li>
+ *     ({@link BatchedFileHandler}) is used. Log4j and Logback: immediateFlush off; each writes when
+ *     its 8 KB buffer is full (neither has a timer).</li>
  * </ol>
  * One fixture is made in a JVM (each benchmark runs in a JVM of its own): the settings are system
  * properties, read when the loggers are made.
@@ -69,6 +76,8 @@ final class LoggerFixture implements AutoCloseable {
 	static final String BASE_OBJECT = "BaseObject";
 	static final String BASE_OBJECT_DEFAULT = "BaseObjectNoLevelSet";
 	static final String JUL = "JavaUtilLogging";
+	static final String LOG4J = "Log4j";
+	static final String LOGBACK = "Logback";
 
 	/** The name every logger is created with (under us.bringardner., so the finder treats it as Parley's). */
 	static final String LOGGER_NAME = LoggerBenchmark.class.getName();
@@ -82,14 +91,20 @@ final class LoggerFixture implements AutoCloseable {
 	/** The layout of a java.util.logging entry: like ParleyLogger's (ISO 8601 time, level, logger name, message). */
 	static final String JUL_FORMAT = "%1$tFT%1$tT.%1$tL%1$tz %4$s %3$s - %5$s%6$s%n";
 
+	/** The same layout for Log4j and for Logback (their pattern languages differ a little). */
+	static final String LOG4J_PATTERN = "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} [%t] %p %c - %m%n";
+	static final String LOGBACK_PATTERN = "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} [%thread] %level %logger - %msg%n";
+
 	final BenchLogger logger;
 	private final String type;
 	private final Path dir;
 	private java.util.logging.Handler julHandler;
 	private ScheduledExecutorService julFlusher;
+	private ch.qos.logback.classic.LoggerContext logbackContext;
 
 	/**
-	 * @param type    one of {@link #PARLEY}, {@link #BASE_OBJECT}, {@link #BASE_OBJECT_DEFAULT} or {@link #JUL}
+	 * @param type    one of {@link #PARLEY}, {@link #BASE_OBJECT}, {@link #BASE_OBJECT_DEFAULT}, {@link #JUL},
+	 *                {@link #LOG4J} or {@link #LOGBACK}
 	 * @param batched true to collect entries and write them together, false to write each one as it is logged
 	 */
 	LoggerFixture(String type, boolean batched) throws IOException {
@@ -120,6 +135,13 @@ final class LoggerFixture implements AutoCloseable {
 			case JUL:
 				useJulFile(file, batched);
 				logger = new JulBenchLogger(java.util.logging.Logger.getLogger(LOGGER_NAME));
+				break;
+			case LOG4J:
+				System.setProperty("log4j2.configurationFile", writeLog4jConfig(file, batched).toString());
+				logger = new Log4jBenchLogger(org.apache.logging.log4j.LogManager.getLogger(LOGGER_NAME));
+				break;
+			case LOGBACK:
+				logger = new LogbackBenchLogger(useLogbackFile(file, batched));
 				break;
 			default:
 				throw new IllegalArgumentException("Unknown logger type " + type);
@@ -174,13 +196,82 @@ final class LoggerFixture implements AutoCloseable {
 		root.setLevel(java.util.logging.Level.INFO);
 	}
 
+	private Path writeLog4jConfig(Path file, boolean batched) throws IOException {
+		String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+				+ "<Configuration status=\"WARN\">\n"
+				+ "  <Appenders>\n"
+				+ "    <RollingFile name=\"file\" fileName=\"" + file + "\" filePattern=\"" + file + ".%i\""
+				+ " immediateFlush=\"" + !batched + "\" bufferedIO=\"true\">\n"
+				+ "      <PatternLayout pattern=\"" + LOG4J_PATTERN + "\"/>\n"
+				+ "      <SizeBasedTriggeringPolicy size=\"" + MAX_FILE_SIZE + "\"/>\n"
+				+ "      <DefaultRolloverStrategy max=\"1\"/>\n"
+				+ "    </RollingFile>\n"
+				+ "  </Appenders>\n"
+				+ "  <Loggers>\n"
+				+ "    <Root level=\"INFO\"><AppenderRef ref=\"file\"/></Root>\n"
+				+ "  </Loggers>\n"
+				+ "</Configuration>\n";
+		Path config = dir.resolve("log4j2-benchmark.xml");
+		Files.writeString(config, xml);
+		return config;
+	}
+
+	/** Send every Logback message to the file (and nowhere else), set up in code. */
+	private org.slf4j.Logger useLogbackFile(Path file, boolean batched) {
+		ch.qos.logback.classic.LoggerContext context = (ch.qos.logback.classic.LoggerContext) org.slf4j.LoggerFactory.getILoggerFactory();
+		logbackContext = context;
+		//  (without a configuration file Logback starts with a console appender at DEBUG)
+		context.reset();
+
+		ch.qos.logback.classic.encoder.PatternLayoutEncoder encoder = new ch.qos.logback.classic.encoder.PatternLayoutEncoder();
+		encoder.setContext(context);
+		encoder.setPattern(LOGBACK_PATTERN);
+		encoder.start();
+
+		ch.qos.logback.core.rolling.RollingFileAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender = new ch.qos.logback.core.rolling.RollingFileAppender<>();
+		appender.setContext(context);
+		appender.setName("file");
+		appender.setFile(file.toString());
+		appender.setAppend(true);
+		appender.setImmediateFlush(!batched);
+		appender.setEncoder(encoder);
+
+		ch.qos.logback.core.rolling.FixedWindowRollingPolicy rolling = new ch.qos.logback.core.rolling.FixedWindowRollingPolicy();
+		rolling.setContext(context);
+		rolling.setParent(appender);
+		rolling.setFileNamePattern(file + ".%i");
+		rolling.setMinIndex(1);
+		rolling.setMaxIndex(1);
+		rolling.start();
+
+		ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy<ch.qos.logback.classic.spi.ILoggingEvent> trigger = new ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy<>();
+		trigger.setContext(context);
+		trigger.setMaxFileSize(new ch.qos.logback.core.util.FileSize(MAX_FILE_SIZE));
+		trigger.start();
+
+		appender.setRollingPolicy(rolling);
+		appender.setTriggeringPolicy(trigger);
+		appender.start();
+
+		ch.qos.logback.classic.Logger root = context.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+		root.setLevel(ch.qos.logback.classic.Level.INFO);
+		root.addAppender(appender);
+		return context.getLogger(LOGGER_NAME);
+	}
+
 	/**
 	 * Write anything still waiting, close the log file and stop the timer, and remove the temporary folder.
 	 */
 	@Override
 	public void close() throws IOException {
 		try {
-			if( JUL.equals(type) ) {
+			if( LOG4J.equals(type) ) {
+				org.apache.logging.log4j.LogManager.shutdown();
+			} else if( LOGBACK.equals(type) ) {
+				if( logbackContext != null ) {
+					logbackContext.stop();
+				}
+			} else if( JUL.equals(type) ) {
 				if( julFlusher != null ) {
 					julFlusher.shutdownNow();
 					try {
@@ -336,6 +427,97 @@ final class LoggerFixture implements AutoCloseable {
 		@Override
 		public void warn(String msg, Throwable error) {
 			logger.log(java.util.logging.Level.WARNING, msg, error);
+		}
+	}
+
+	/** Log4j 2 called directly. */
+	private static final class Log4jBenchLogger implements BenchLogger {
+		private final org.apache.logging.log4j.Logger logger;
+
+		Log4jBenchLogger(org.apache.logging.log4j.Logger logger) {
+			this.logger = logger;
+		}
+
+		@Override
+		public boolean isDebugEnabled() {
+			return logger.isDebugEnabled();
+		}
+
+		@Override
+		public boolean isInfoEnabled() {
+			return logger.isInfoEnabled();
+		}
+
+		@Override
+		public boolean isWarnEnabled() {
+			return logger.isWarnEnabled();
+		}
+
+		@Override
+		public void debug(String msg) {
+			logger.debug(msg);
+		}
+
+		@Override
+		public void debug(Supplier<String> msg) {
+			//  (Log4j has a Supplier of its own)
+			org.apache.logging.log4j.util.Supplier<String> s = msg::get;
+			logger.debug(s);
+		}
+
+		@Override
+		public void info(String msg) {
+			logger.info(msg);
+		}
+
+		@Override
+		public void warn(String msg, Throwable error) {
+			logger.warn(msg, error);
+		}
+	}
+
+	/** Logback called directly, through SLF4J. */
+	private static final class LogbackBenchLogger implements BenchLogger {
+		private final org.slf4j.Logger logger;
+
+		LogbackBenchLogger(org.slf4j.Logger logger) {
+			this.logger = logger;
+		}
+
+		@Override
+		public boolean isDebugEnabled() {
+			return logger.isDebugEnabled();
+		}
+
+		@Override
+		public boolean isInfoEnabled() {
+			return logger.isInfoEnabled();
+		}
+
+		@Override
+		public boolean isWarnEnabled() {
+			return logger.isWarnEnabled();
+		}
+
+		@Override
+		public void debug(String msg) {
+			logger.debug(msg);
+		}
+
+		@Override
+		public void debug(Supplier<String> msg) {
+			//  (SLF4J takes a Supplier through its fluent calls)
+			logger.atDebug().log(msg);
+		}
+
+		@Override
+		public void info(String msg) {
+			logger.info(msg);
+		}
+
+		@Override
+		public void warn(String msg, Throwable error) {
+			logger.warn(msg, error);
 		}
 	}
 

@@ -95,7 +95,9 @@ mvn verify
    that includes parley-logging.
 3. `JavaUtilLogging`: `java.util.logging` called directly, which is what an application with no
    `System.Logger` provider writes with.
-4. `BaseObjectNoLevelSet` (`NoLevelSetBenchmark`): the Parley object again with no `parley.log.level`
+4. `Log4j`: Log4j 2 called directly.
+5. `Logback`: Logback called directly, through SLF4J.
+6. `BaseObjectNoLevelSet` (`NoLevelSetBenchmark`): the Parley object again with no `parley.log.level`
    set, where the logger holds DEBUG and INFO back and looks at the settings for each such message.
    Only the level check and the debug calls are measured.
 
@@ -103,14 +105,21 @@ It measures level checks, debug calls when debug is off (with a constant message
 and a `Supplier`), info written to a file from one thread and from four, and warn with a stack
 trace, every entry written to the file as soon as it is logged. `BatchedLoggerBenchmark` measures the
 file-writing cases again with entries collected and written together: `ParleyLogger` with
-`parley.log.flushInterval=500ms`, and `java.util.logging` with a `FileHandler` that writes every
-500 ms (`java.util.logging` has no setting for it). Run them all with
+`parley.log.flushInterval=500ms`, `java.util.logging` with a `FileHandler` that writes every
+500 ms (`java.util.logging` has no setting for it), and Log4j and Logback with `immediateFlush` off
+(each writes when its 8 KB buffer is full).
+
+Log4j and Logback are what an application gets behind `System.Logger` when it includes their bridge
+(`log4j-jpl`, `slf4j-jdk-platform-logging`) in place of parley-logging. They are called directly
+because a JVM has one `System.Logger` provider and the benchmark's is parley-logging's; the
+`BaseObject` case shows what `BaseObject` and `System.Logger` add in front of a logger. Both are
+test dependencies only. Run them all with
 
 ```bash
 mvn -Pbenchmark test
 ```
 
-It takes about 10 minutes. The benchmark profile builds in `target/benchmark` (apart from Eclipse's
+It takes about 15 minutes. The benchmark profile builds in `target/benchmark` (apart from Eclipse's
 classes) and runs the benchmarks in place of the unit tests; normal builds don't run it. After JMH's
 own table it prints how the loggers compare, also saved to `target/benchmark/relative.txt`:
 

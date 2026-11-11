@@ -26,6 +26,9 @@
 		<parley.moduleName>us.bringardner.parley.logging</parley.moduleName>
 		<junit.version>5.11.4</junit.version>
 		<jmh.version>1.37</jmh.version>
+		<!-- Only the logger benchmark uses these (test scope): the loggers ParleyLogger is compared with -->
+		<log4j.version>2.24.3</log4j.version>
+		<logback.version>1.5.18</logback.version>
 		<!-- JMH options for 'mvn -Pbenchmark test' (see LoggerBenchmark) -->
 		<jmh.args>-rf json -rff ${project.build.directory}/logger-benchmark.json</jmh.args>
 	</properties>
@@ -50,6 +53,21 @@
 			<groupId>org.openjdk.jmh</groupId>
 			<artifactId>jmh-core</artifactId>
 			<version>${jmh.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<!-- Log4j 2 and Logback (with SLF4J, its API), called directly by the logger benchmark. Neither
+		     installs a System.LoggerFinder (their bridges, log4j-jpl and slf4j-jdk-platform-logging, are
+		     separate jars), so the unit tests still get ParleyLoggerFinder. -->
+		<dependency>
+			<groupId>org.apache.logging.log4j</groupId>
+			<artifactId>log4j-core</artifactId>
+			<version>${log4j.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>ch.qos.logback</groupId>
+			<artifactId>logback-classic</artifactId>
+			<version>${logback.version}</version>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>

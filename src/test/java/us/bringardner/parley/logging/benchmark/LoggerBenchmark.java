@@ -63,7 +63,7 @@ import org.openjdk.jmh.annotations.State;
 @State(Scope.Benchmark)
 public class LoggerBenchmark extends AbstractFileLoggingBenchmark {
 
-	@Param({LoggerFixture.PARLEY, LoggerFixture.BASE_OBJECT, LoggerFixture.JUL})
+	@Param({LoggerFixture.PARLEY, LoggerFixture.BASE_OBJECT, LoggerFixture.JUL, LoggerFixture.LOG4J, LoggerFixture.LOGBACK})
 	public String loggerType;
 
 	@Override
