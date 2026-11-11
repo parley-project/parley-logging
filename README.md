@@ -115,6 +115,75 @@ has no `LogContext` (a connection logging outside a handler's call) stays in the
 mvn verify
 ```
 
+### Logger benchmark
+
+`LoggerBenchmark` (in `src/test/java`, package `us.bringardner.parley.logging.benchmark`) is a
+[JMH](https://github.com/openjdk/jmh) benchmark of what Parley logging costs. It compares:
+
+1. `ParleyLogger`: a `ParleyLogger` called directly, as the `System.Logger` it is.
+2. `JavaUtilLogging`, `Log4j`, `Logback`: `java.util.logging`, Log4j 2 and Logback (through SLF4J)
+   called directly.
+3. `BaseObjectToParleyLogger`: a Parley object logging through `BaseObject` and the JDK's
+   `System.Logger` to a `ParleyLogger`, with `parley.log.level=INFO`. This is what Parley code does
+   in an application that includes parley-logging.
+4. `BaseObjectToLog4j`, `BaseObjectToLogback`, `BaseObjectToJavaUtilLogging` (the `Via...Benchmark`
+   classes): the same Parley object with Log4j 2 (its `log4j-jpl` bridge), Logback (SLF4J's
+   `slf4j-jdk-platform-logging` bridge) or `java.util.logging` (the JDK's own, when there is no
+   provider) behind `System.Logger`: what Parley code costs in an application that uses that
+   logging system.
+5. `BaseObjectNoLevelSet` (`NoLevelSetBenchmark`): the Parley object and `ParleyLogger` again with
+   no `parley.log.level` set, where the logger holds DEBUG and INFO back and looks at the settings
+   for each such message. Only the level check and the debug calls are measured.
+
+It measures level checks, debug calls when debug is off (with a constant message, a concatenated one
+and a `Supplier`), info written to a file from one thread and from four, and warn with a stack
+trace, every entry written to the file as soon as it is logged. `BatchedLoggerBenchmark` measures the
+file-writing cases again with entries collected and written together: `ParleyLogger` with
+`parley.log.flushInterval=500ms`, `java.util.logging` with a `FileHandler` that writes every
+500 ms (`java.util.logging` has no setting for it), and Log4j and Logback with `immediateFlush` off
+(each writes when its 8 KB buffer is full).
+
+A JVM has one `System.Logger` provider, the first the JDK finds, so each benchmark class runs in
+JVMs with the provider it needs: the benchmark profile keeps every provider's service file off the
+class path (parley-logging's own too) and adds the right one to those JVMs' boot class path
+(`target/benchmark/finders`). Log4j, Logback, SLF4J and the two bridges are used by the benchmark
+only: Log4j and Logback are test dependencies, and the bridges are unpacked by the benchmark
+profile. Run them all with
+
+```bash
+mvn -Pbenchmark test
+```
+
+It takes about 25 minutes. The benchmark profile builds in `target/benchmark` (apart from Eclipse's
+classes) and runs the benchmarks in place of the unit tests; normal builds don't run it. After JMH's
+own table it prints how the loggers compare, also saved to `target/benchmark/relative.txt`:
+
+1. Every entry written at once: for each benchmark the fastest logger is 1.00, the others multiples of its time.
+2. Batched: the same, among the batched loggers.
+3. Batched against every entry written at once: each logger's batched time divided by its own unbatched
+   time (0.25 is four times faster batched).
+
+JMH options go in `-Djmh.args` (they replace the default, which also writes
+`target/benchmark/logger-benchmark.json`). For example:
+
+```bash
+# 3 JVMs per benchmark, for steadier results with an error margin
+mvn -Pbenchmark test -Djmh.args="-f 3"
+# only the info benchmarks of LoggerBenchmark, 8 threads, two of its loggers
+mvn -Pbenchmark test -Djmh.args="\.LoggerBenchmark.info -t 8 -p loggerType=ParleyLogger,Logback"
+# only the classes with another logging system behind System.Logger
+mvn -Pbenchmark test -Djmh.args="Via"
+# JMH's own help
+mvn -Pbenchmark test -Djmh.args="-h"
+```
+
+Run it from the project folder: the JVMs find their provider's service file by a path relative to
+it. `-p loggerType=...` sets the logger of every class that runs, and a class whose JVMs have another
+provider than that logger needs fails with a message saying so, so name the class as well (as above).
+
+Results are for comparing loggers, or one version against another, on the same machine and JDK.
+Differences under a nanosecond (the debug benchmarks) are within noise unless they hold up with `-f 3`.
+
 ## License
 
 Apache License 2.0.

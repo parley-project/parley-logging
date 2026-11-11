@@ -25,6 +25,13 @@
 		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 		<parley.moduleName>us.bringardner.parley.logging</parley.moduleName>
 		<junit.version>5.11.4</junit.version>
+		<jmh.version>1.37</jmh.version>
+		<!-- Only the logger benchmark uses these (test scope): the loggers ParleyLogger is compared with -->
+		<log4j.version>2.24.3</log4j.version>
+		<logback.version>1.5.18</logback.version>
+		<slf4j.version>2.0.17</slf4j.version>
+		<!-- JMH options for 'mvn -Pbenchmark test' (see LoggerBenchmark) -->
+		<jmh.args>-rf json -rff ${project.build.directory}/logger-benchmark.json</jmh.args>
 	</properties>
 
 	<dependencies>
@@ -40,5 +47,146 @@
 			<version>${junit.version}</version>
 			<scope>test</scope>
 		</dependency>
+		<!-- JMH, for the benchmarks in src/test/java (LoggerBenchmark). The annotation processor that
+		     generates the benchmark code is only used by the benchmark profile, so normal builds and
+		     surefire are not affected. -->
+		<dependency>
+			<groupId>org.openjdk.jmh</groupId>
+			<artifactId>jmh-core</artifactId>
+			<version>${jmh.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<!-- Log4j 2 and Logback (with SLF4J, its API), called directly by the logger benchmark. Neither
+		     installs a System.LoggerFinder (their bridges, log4j-jpl and slf4j-jdk-platform-logging, are
+		     separate jars), so the unit tests still get ParleyLoggerFinder. -->
+		<dependency>
+			<groupId>org.apache.logging.log4j</groupId>
+			<artifactId>log4j-core</artifactId>
+			<version>${log4j.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>ch.qos.logback</groupId>
+			<artifactId>logback-classic</artifactId>
+			<version>${logback.version}</version>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
+	<profiles>
+		<!--
+		  Performance benchmarks (JMH): mvn -Pbenchmark test
+		  Compiles the tests with JMH's annotation processor and runs the benchmarks in place of the
+		  unit tests. JMH options can be given with -Djmh.args="..." (for example -Djmh.args="-h" for help).
+		-->
+		<profile>
+			<id>benchmark</id>
+			<properties>
+				<skipTests>true</skipTests>
+				<jacoco.skip>true</jacoco.skip>
+			</properties>
+			<build>
+				<!-- A build folder of its own: Eclipse (and a normal build) compile the tests into
+				     target/test-classes without JMH's code generator, and Maven then sees them as up to
+				     date and doesn't generate the benchmark code (META-INF/BenchmarkList) -->
+				<directory>${project.basedir}/target/benchmark</directory>
+				<!-- A JVM has one System.LoggerFinder, the first the JDK finds, and the benchmarks need a
+				     different one in different JVMs (parley-logging's, Log4j's, SLF4J's, or none for
+				     java.util.logging). So no service file is on the benchmark's class path: parley-logging's
+				     own is left out of the classes and copied to target/benchmark/finders/parley, and Log4j's
+				     and SLF4J's (src/benchmark/resources) to finders/log4j and finders/slf4j. Each benchmark
+				     class's JVMs add the folder they need to the boot class path (LoggerFixture). -->
+				<resources>
+					<resource>
+						<directory>src/main/resources</directory>
+						<excludes>
+							<exclude>META-INF/services/**</exclude>
+						</excludes>
+					</resource>
+				</resources>
+				<testResources>
+					<testResource>
+						<directory>src/main/resources</directory>
+						<includes>
+							<include>META-INF/services/**</include>
+						</includes>
+						<targetPath>${project.build.directory}/finders/parley</targetPath>
+					</testResource>
+					<testResource>
+						<directory>src/benchmark/resources</directory>
+						<targetPath>${project.build.directory}/finders</targetPath>
+					</testResource>
+				</testResources>
+				<plugins>
+					<!-- The bridges that put Log4j and SLF4J (Logback) behind System.Logger, as classes
+					     without their service files (see above), so they are not dependencies -->
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-dependency-plugin</artifactId>
+						<executions>
+							<execution>
+								<id>unpack-logger-bridges</id>
+								<phase>process-test-classes</phase>
+								<goals>
+									<goal>unpack</goal>
+								</goals>
+								<configuration>
+									<artifactItems>
+										<artifactItem>
+											<groupId>org.apache.logging.log4j</groupId>
+											<artifactId>log4j-jpl</artifactId>
+											<version>${log4j.version}</version>
+										</artifactItem>
+										<artifactItem>
+											<groupId>org.slf4j</groupId>
+											<artifactId>slf4j-jdk-platform-logging</artifactId>
+											<version>${slf4j.version}</version>
+										</artifactItem>
+									</artifactItems>
+									<outputDirectory>${project.build.testOutputDirectory}</outputDirectory>
+									<excludes>META-INF/**,module-info.class</excludes>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-compiler-plugin</artifactId>
+						<executions>
+							<execution>
+								<id>default-testCompile</id>
+								<configuration>
+									<annotationProcessorPaths>
+										<path>
+											<groupId>org.openjdk.jmh</groupId>
+											<artifactId>jmh-generator-annprocess</artifactId>
+											<version>${jmh.version}</version>
+										</path>
+									</annotationProcessorPaths>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+					<plugin>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>exec-maven-plugin</artifactId>
+						<version>3.5.0</version>
+						<executions>
+							<execution>
+								<id>run-benchmarks</id>
+								<phase>test</phase>
+								<goals>
+									<goal>exec</goal>
+								</goals>
+								<configuration>
+									<executable>java</executable>
+									<classpathScope>test</classpathScope>
+									<commandlineArgs>-Dbenchmark.dir=${project.build.directory} -classpath %classpath us.bringardner.parley.logging.benchmark.LoggerBenchmarkRunner ${jmh.args}</commandlineArgs>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
 </project>
