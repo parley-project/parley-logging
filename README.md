@@ -32,15 +32,27 @@ Nothing else is needed: `META-INF/services/java.lang.System$LoggerFinder` instal
 
 ## Levels
 
-- A logger named under `us.bringardner.` lets everything through: Parley's objects have already
-  decided with their own level (`BaseObject.setLogLevel`, or the `parley.log.level` settings; see
-  parley-core's README). With neither set, a Parley object logs everything, DEBUG included, so an
-  application usually sets `parley.log.level` (fsh sets `WARN` when it isn't set).
+No application has to set a level: when no `parley.log.level` system property covers a logger's
+name, the logger lets `WARN` and `ERROR` through.
+
+- A logger named under `us.bringardner.` is Parley's: its messages come through `BaseObject`. When a
+  `parley.log.level` system property covers its name (`parley.log.level.pop3.server.Pop3Server`, then
+  `parley.log.level.pop3.server`, `parley.log.level.pop3`, then `parley.log.level`), `BaseObject` has
+  already decided with it and the logger lets everything through (see parley-core's README). When
+  none does, the logger lets `WARN` and `ERROR` through. The settings are looked at each time a
+  message below `WARN` arrives, so one made after the logger (a server that loads its properties file
+  when it starts) counts.
 - Any other logger (the JDK's, JMX's, HttpClient's) uses the nearest `parley.log.level` system
   property for its name (`parley.log.level.javax.management`, then `parley.log.level.javax`, then
   `parley.log.level`), `WARN` when none is set, so their DEBUG and TRACE messages don't flood the log.
+  These loggers are made once per name and read their settings then.
 
-A logger is made once per name and reads its settings then. `ParleyLogger.setLevel` changes one.
+`ParleyLogger.setLevel` on a logger wins over both.
+
+The logger's level is the only one a `System.Logger` knows. A level an object was given with
+`BaseObject.setLogLevel`, or a `parley.log.level` in an object's own configuration, decides what
+`BaseObject` passes on; the logger then decides again. To see a Parley object's INFO or DEBUG
+messages, set a `parley.log.level` system property that covers it (`-Dparley.log.level.pop3=DEBUG`).
 
 ## Settings
 

@@ -100,15 +100,102 @@ public class TestParleyLogger {
 		System.Logger logger = System.getLogger("us.bringardner.parley.test.Installed");
 		assertTrue(logger instanceof ParleyLogger, "META-INF/services makes ParleyLoggerFinder the JVM's finder: " + logger.getClass());
 		assertSame(logger, System.getLogger("us.bringardner.parley.test.Installed"), "One logger per name");
-		assertEquals(LogLevel.DEBUG, ((ParleyLogger) logger).getLevel(), "Parley loggers let everything through");
+		assertEquals(LogLevel.WARN, ((ParleyLogger) logger).getLevel(), "With no parley.log.level, a Parley logger is at WARN");
+	}
+
+	@Test
+	public void testParleyLoggerDefaultsToWarn() {
+		String name = "us.bringardner.parley.test.warn.Default";
+		String[] keys = { "parley.log.level", "parley.log.level.test.warn" };
+		ParleyLogger logger = (ParleyLogger) System.getLogger(name);
+		LogHelper helper = new LogHelper(name);
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		logger.setOut(new PrintStream(out, true));
+		logger.setErr(new PrintStream(out, true));
+		try {
+			//  Nothing set: no application has to set a level to keep DEBUG and INFO out
+			assertFalse(logger.isLoggable(System.Logger.Level.DEBUG));
+			assertFalse(logger.isLoggable(System.Logger.Level.INFO));
+			assertTrue(logger.isLoggable(System.Logger.Level.WARNING));
+			assertTrue(logger.isLoggable(System.Logger.Level.ERROR));
+			assertFalse(logger.isLoggable(System.Logger.Level.OFF));
+			helper.logDebug("default debug");
+			helper.logInfo("default info");
+			helper.logWarn("default warn");
+			helper.logError("default error");
+
+			//  A setting made after the logger was (a server reading its properties file) counts
+			System.setProperty("parley.log.level", "INFO");
+			BaseObject.refreshLogLevels();
+			assertEquals(LogLevel.DEBUG, logger.getLevel(), "BaseObject decides once a setting covers the name");
+			helper.logDebug("info setting debug");
+			helper.logInfo("info setting info");
+
+			System.clearProperty("parley.log.level");
+			System.setProperty("parley.log.level.test.warn", "DEBUG");
+			BaseObject.refreshLogLevels();
+			helper.logDebug("module setting debug");
+
+			//  An empty setting is no setting
+			System.setProperty("parley.log.level.test.warn", " ");
+			BaseObject.refreshLogLevels();
+			assertEquals(LogLevel.WARN, logger.getLevel());
+			helper.logInfo("empty setting info");
+
+			//  An object's own level is BaseObject's; the logger still decides
+			System.clearProperty("parley.log.level.test.warn");
+			BaseObject.refreshLogLevels();
+			helper.setLogLevel(LogLevel.DEBUG);
+			helper.logDebug("object level debug");
+			helper.setLogLevel(LogLevel.ERROR);
+			helper.logWarn("object level warn");
+		} finally {
+			for(String k : keys) {
+				System.clearProperty(k);
+			}
+			BaseObject.refreshLogLevels();
+			logger.setOut(null);
+			logger.setErr(null);
+		}
+		String o = out.toString();
+		assertFalse(o.contains("default debug"), o);
+		assertFalse(o.contains("default info"), o);
+		assertTrue(o.contains("WARN " + name + " - default warn"), o);
+		assertTrue(o.contains("ERROR " + name + " - default error"), o);
+		assertFalse(o.contains("info setting debug"), o);
+		assertTrue(o.contains("INFO " + name + " - info setting info"), o);
+		assertTrue(o.contains("DEBUG " + name + " - module setting debug"), o);
+		assertFalse(o.contains("empty setting info"), o);
+		assertFalse(o.contains("object level debug"), o);
+		assertFalse(o.contains("object level warn"), o);
+	}
+
+	@Test
+	public void testSetLevelOnAParleyLoggerWins() {
+		String name = "us.bringardner.parley.test.warn.SetLevel";
+		ParleyLogger logger = (ParleyLogger) System.getLogger(name);
+		try {
+			logger.setLevel(LogLevel.INFO);
+			assertEquals(LogLevel.INFO, logger.getLevel());
+			assertTrue(logger.isLoggable(System.Logger.Level.INFO));
+			assertFalse(logger.isLoggable(System.Logger.Level.DEBUG));
+
+			System.setProperty("parley.log.level", "DEBUG");
+			assertFalse(logger.isLoggable(System.Logger.Level.DEBUG), "setLevel wins over the settings");
+
+			logger.setLevel(LogLevel.NONE);
+			assertFalse(logger.isLoggable(System.Logger.Level.ERROR));
+		} finally {
+			System.clearProperty("parley.log.level");
+		}
 	}
 
 	@Test
 	public void testLevelForNames() {
 		String[] keys = { "parley.log.level", "parley.log.level.javax.management", "parley.log.level.pop3" };
 		try {
-			assertEquals(LogLevel.DEBUG, ParleyLoggerFinder.levelFor("us.bringardner.parley.pop3.server.Pop3Server"));
-			assertEquals(LogLevel.DEBUG, ParleyLoggerFinder.levelFor("us.bringardner.fsh.Shell"));
+			assertEquals(LogLevel.WARN, ParleyLoggerFinder.levelFor("us.bringardner.parley.pop3.server.Pop3Server"), "Parley's default to WARN too");
+			assertEquals(LogLevel.WARN, ParleyLoggerFinder.levelFor("us.bringardner.fsh.Shell"));
 			assertEquals(LogLevel.WARN, ParleyLoggerFinder.levelFor("javax.management.mbeanserver"), "Others default to WARN");
 			assertEquals(LogLevel.WARN, ParleyLoggerFinder.levelFor(null));
 
@@ -119,6 +206,11 @@ public class TestParleyLogger {
 			assertEquals(LogLevel.ERROR, ParleyLoggerFinder.levelFor("jdk.internal.httpclient.debug"), "parley.log.level");
 			assertEquals(LogLevel.DEBUG, ParleyLoggerFinder.levelFor("us.bringardner.parley.pop3.Pop3Client"),
 					"BaseObject reads parley.log.level for Parley loggers, not the finder");
+			assertEquals(LogLevel.DEBUG, ParleyLoggerFinder.levelFor("us.bringardner.fsh.Shell"), "parley.log.level covers every Parley logger");
+
+			System.clearProperty("parley.log.level");
+			assertEquals(LogLevel.DEBUG, ParleyLoggerFinder.levelFor("us.bringardner.parley.pop3.Pop3Client"), "parley.log.level.pop3 covers it");
+			assertEquals(LogLevel.WARN, ParleyLoggerFinder.levelFor("us.bringardner.parley.smtp.SmtpClient"), "nothing covers it");
 		} finally {
 			for(String k : keys) {
 				System.clearProperty(k);
@@ -135,11 +227,16 @@ public class TestParleyLogger {
 		logger.setOut(new PrintStream(out, true));
 		logger.setErr(new PrintStream(err, true));
 		try {
+			//  (with no setting the logger would hold DEBUG and INFO back)
+			System.setProperty("parley.log.level.test.ThroughBaseObject", "DEBUG");
+			BaseObject.refreshLogLevels();
 			helper.logDebug("debug from BaseObject");
 			helper.setLogLevel(LogLevel.INFO);
 			helper.logDebug("held back by BaseObject");
 			helper.logInfo(() -> "lazy info");
 		} finally {
+			System.clearProperty("parley.log.level.test.ThroughBaseObject");
+			BaseObject.refreshLogLevels();
 			logger.setOut(null);
 			logger.setErr(null);
 		}
