@@ -17,7 +17,6 @@
  */
 package us.bringardner.parley.logging.benchmark;
 
-import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.Fork;
 import org.openjdk.jmh.annotations.Param;
 import org.openjdk.jmh.annotations.Scope;
@@ -47,6 +46,9 @@ import org.openjdk.jmh.annotations.State;
  * soon as it is logged (each logger's default). {@link BatchedLoggerBenchmark} measures the
  * file-writing cases again with entries collected and written together, and
  * {@link NoLevelSetBenchmark} the calls a logger holds back when no parley.log.level is set.
+ * {@link ViaLog4jBenchmark}, {@link ViaLogbackBenchmark} and {@link ViaJulBenchmark} (and their
+ * Batched classes) measure a Parley object with Log4j, Logback or java.util.logging behind
+ * System.Logger; each is a class of its own because its JVMs need their own System.LoggerFinder.
  * <p>
  * What is measured (average time per call):
  * <ol>
@@ -59,9 +61,10 @@ import org.openjdk.jmh.annotations.State;
  * <li>warnWithThrowable: warn(msg, exception), written to the file with its stack trace.</li>
  * </ol>
  */
-@Fork(1)
+//  parley-logging's ParleyLoggerFinder is this JVM's System.LoggerFinder (see LoggerFixture)
+@Fork(value = 1, jvmArgsAppend = LoggerFixture.FINDER_PARLEY)
 @State(Scope.Benchmark)
-public class LoggerBenchmark extends AbstractFileLoggingBenchmark {
+public class LoggerBenchmark extends AbstractLoggerBenchmark {
 
 	@Param({LoggerFixture.PARLEY, LoggerFixture.BASE_OBJECT, LoggerFixture.JUL, LoggerFixture.LOG4J, LoggerFixture.LOGBACK})
 	public String loggerType;
@@ -69,31 +72,5 @@ public class LoggerBenchmark extends AbstractFileLoggingBenchmark {
 	@Override
 	protected String loggerType() {
 		return loggerType;
-	}
-
-	@Override
-	protected boolean batched() {
-		return false;
-	}
-
-	@Benchmark
-	public boolean isDebugEnabled() {
-		return logger.isDebugEnabled();
-	}
-
-	@Benchmark
-	public void debugDisabled() {
-		logger.debug("A debug message that is never written");
-	}
-
-	@Benchmark
-	public void debugDisabledConcat(Counter c) {
-		logger.debug("value=" + c.n++);
-	}
-
-	@Benchmark
-	public void debugDisabledSupplier(Counter c) {
-		int n = c.n++;
-		logger.debug(() -> "value=" + n);
 	}
 }

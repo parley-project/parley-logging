@@ -32,7 +32,8 @@ import org.openjdk.jmh.annotations.State;
  * The benchmark methods have LoggerBenchmark's names, so {@link LoggerBenchmarkRunner} puts the
  * results in the same table, as one more logger.
  */
-@Fork(1)
+//  parley-logging's ParleyLoggerFinder is this JVM's System.LoggerFinder (see LoggerFixture)
+@Fork(value = 1, jvmArgsAppend = LoggerFixture.FINDER_PARLEY)
 @State(Scope.Benchmark)
 public class NoLevelSetBenchmark extends AbstractBenchmark {
 

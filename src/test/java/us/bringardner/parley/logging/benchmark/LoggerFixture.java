@@ -49,11 +49,18 @@ import us.bringardner.parley.logging.ParleyLogger;
  *     System.Logger provider writes with.</li>
  * <li>{@link #LOG4J}: Log4j 2 called directly (its own API), at level INFO.</li>
  * <li>{@link #LOGBACK}: Logback called directly (through SLF4J, its API), at level INFO.</li>
+ * <li>{@link #BASE_OBJECT_LOG4J}, {@link #BASE_OBJECT_LOGBACK} and {@link #BASE_OBJECT_JUL}: a Parley
+ *     object logging through BaseObject and System.Logger, as in {@link #BASE_OBJECT}, with Log4j 2
+ *     (its log4j-jpl bridge), Logback (SLF4J's slf4j-jdk-platform-logging bridge) or
+ *     java.util.logging (the JDK's own, when a JVM has no provider) behind System.Logger: what Parley
+ *     code costs in an application that uses that logging system. Each is set up as it is when called
+ *     directly.</li>
  * </ol>
- * Log4j and Logback are what an application gets behind System.Logger when it includes their bridge
- * (log4j-jpl, slf4j-jdk-platform-logging) in place of parley-logging. They are called directly here
- * because a JVM has one System.Logger provider and the benchmark's is parley-logging's; the
- * BaseObject column shows what BaseObject and System.Logger add in front of a logger.
+ * A JVM has one System.Logger provider, the first the JDK finds. The benchmark profile keeps every
+ * provider's service file off the class path (parley-logging's own too) and gives each benchmark
+ * class's JVMs the one they need with -Xbootclasspath/a ({@link #FINDER_PARLEY},
+ * {@link #FINDER_LOG4J}, {@link #FINDER_SLF4J}); the java.util.logging JVMs get none. The fixture
+ * checks that the JVM it runs in has the provider its logger type needs.
  * Every logger writes to a file in a new temporary folder with a similar one-line layout. The file is
  * rotated at {@link #MAX_FILE_SIZE} with one old file kept, so a long run can't fill the disk.
  * <p>
@@ -73,11 +80,29 @@ final class LoggerFixture implements AutoCloseable {
 
 	/** The logger types, the values of the benchmarks' loggerType parameter. */
 	static final String PARLEY = "ParleyLogger";
-	static final String BASE_OBJECT = "BaseObject";
+	static final String BASE_OBJECT = "BaseObjectToParleyLogger";
+	static final String BASE_OBJECT_LOG4J = "BaseObjectToLog4j";
+	static final String BASE_OBJECT_LOGBACK = "BaseObjectToLogback";
+	static final String BASE_OBJECT_JUL = "BaseObjectToJavaUtilLogging";
 	static final String BASE_OBJECT_DEFAULT = "BaseObjectNoLevelSet";
 	static final String JUL = "JavaUtilLogging";
 	static final String LOG4J = "Log4j";
 	static final String LOGBACK = "Logback";
+
+	/**
+	 * The JVM argument that makes a System.LoggerFinder the JVM's: its service file, which the benchmark
+	 * profile copies to a folder of its own under target/benchmark/finders, is put on the boot class
+	 * path, where the JDK finds it first. The path is relative, so the benchmark runs from the project folder.
+	 */
+	static final String FINDER_PARLEY = "-Xbootclasspath/a:target/benchmark/finders/parley";
+	static final String FINDER_LOG4J = "-Xbootclasspath/a:target/benchmark/finders/log4j";
+	static final String FINDER_SLF4J = "-Xbootclasspath/a:target/benchmark/finders/slf4j";
+
+	/** The System.LoggerFinder classes: parley-logging's, log4j-jpl's, slf4j-jdk-platform-logging's and the JDK's for java.util.logging. */
+	private static final String FINDER_CLASS_PARLEY = "us.bringardner.parley.logging.ParleyLoggerFinder";
+	private static final String FINDER_CLASS_LOG4J = "org.apache.logging.log4j.jpl.Log4jSystemLoggerFinder";
+	private static final String FINDER_CLASS_SLF4J = "org.slf4j.jdk.platform.logging.SLF4JSystemLoggerFinder";
+	private static final String FINDER_CLASS_JUL = "sun.util.logging.internal.LoggingProviderImpl";
 
 	/** The name every logger is created with (under us.bringardner., so the finder treats it as Parley's). */
 	static final String LOGGER_NAME = LoggerBenchmark.class.getName();
@@ -103,8 +128,7 @@ final class LoggerFixture implements AutoCloseable {
 	private ch.qos.logback.classic.LoggerContext logbackContext;
 
 	/**
-	 * @param type    one of {@link #PARLEY}, {@link #BASE_OBJECT}, {@link #BASE_OBJECT_DEFAULT}, {@link #JUL},
-	 *                {@link #LOG4J} or {@link #LOGBACK}
+	 * @param type    one of the logger types above
 	 * @param batched true to collect entries and write them together, false to write each one as it is logged
 	 */
 	LoggerFixture(String type, boolean batched) throws IOException {
@@ -113,6 +137,8 @@ final class LoggerFixture implements AutoCloseable {
 		try {
 			Path file = dir.resolve(type + ".log");
 			boolean infoExpected = true;
+			//  The System.LoggerFinder this JVM must have, for the types that log through System.Logger
+			String finder = null;
 
 			switch (type) {
 			case PARLEY:
@@ -124,6 +150,22 @@ final class LoggerFixture implements AutoCloseable {
 				System.setProperty(BaseObject.PROPERTY_LOG_LEVEL, "INFO");
 				BaseObject.refreshLogLevels();
 				logger = new BaseObjectLogger(new LogHelper(LOGGER_NAME));
+				finder = FINDER_CLASS_PARLEY;
+				break;
+			case BASE_OBJECT_LOG4J:
+				useLog4jFile(file, batched);
+				logger = baseObjectAtInfo();
+				finder = FINDER_CLASS_LOG4J;
+				break;
+			case BASE_OBJECT_LOGBACK:
+				useLogbackFile(file, batched);
+				logger = baseObjectAtInfo();
+				finder = FINDER_CLASS_SLF4J;
+				break;
+			case BASE_OBJECT_JUL:
+				useJulFile(file, batched);
+				logger = baseObjectAtInfo();
+				finder = FINDER_CLASS_JUL;
 				break;
 			case BASE_OBJECT_DEFAULT:
 				setParleyProperties(file, batched);
@@ -131,13 +173,14 @@ final class LoggerFixture implements AutoCloseable {
 				BaseObject.refreshLogLevels();
 				logger = new BaseObjectLogger(new LogHelper(LOGGER_NAME));
 				infoExpected = false;
+				finder = FINDER_CLASS_PARLEY;
 				break;
 			case JUL:
 				useJulFile(file, batched);
 				logger = new JulBenchLogger(java.util.logging.Logger.getLogger(LOGGER_NAME));
 				break;
 			case LOG4J:
-				System.setProperty("log4j2.configurationFile", writeLog4jConfig(file, batched).toString());
+				useLog4jFile(file, batched);
 				logger = new Log4jBenchLogger(org.apache.logging.log4j.LogManager.getLogger(LOGGER_NAME));
 				break;
 			case LOGBACK:
@@ -147,9 +190,12 @@ final class LoggerFixture implements AutoCloseable {
 				throw new IllegalArgumentException("Unknown logger type " + type);
 			}
 
-			if( (type.equals(BASE_OBJECT) || type.equals(BASE_OBJECT_DEFAULT))
-					&& !(System.getLogger(LOGGER_NAME) instanceof ParleyLogger) ) {
-				throw new IllegalStateException("System.Logger isn't parley-logging's ParleyLogger: " + System.getLogger(LOGGER_NAME).getClass());
+			if( finder != null ) {
+				String found = System.LoggerFinder.getLoggerFinder().getClass().getName();
+				if( !finder.equals(found) ) {
+					throw new IllegalStateException(type + " needs " + finder + " behind System.Logger, and this JVM has " + found
+							+ ". Run with the benchmark profile (mvn -Pbenchmark test), from the project folder.");
+				}
 			}
 			if( logger.isDebugEnabled() || logger.isInfoEnabled() != infoExpected || !logger.isWarnEnabled() ) {
 				throw new IllegalStateException(type + " isn't at the level the benchmark expects (" + (infoExpected ? "INFO" : "WARN") + ")");
@@ -158,6 +204,13 @@ final class LoggerFixture implements AutoCloseable {
 			close();
 			throw e;
 		}
+	}
+
+	/** A Parley object with parley.log.level=INFO: BaseObject holds DEBUG back, and what it passes goes to System.Logger. */
+	private static BenchLogger baseObjectAtInfo() {
+		System.setProperty(BaseObject.PROPERTY_LOG_LEVEL, "INFO");
+		BaseObject.refreshLogLevels();
+		return new BaseObjectLogger(new LogHelper(LOGGER_NAME));
 	}
 
 	private static void setParleyProperties(Path file, boolean batched) {
@@ -194,6 +247,14 @@ final class LoggerFixture implements AutoCloseable {
 		julHandler.setLevel(java.util.logging.Level.ALL);
 		root.addHandler(julHandler);
 		root.setLevel(java.util.logging.Level.INFO);
+	}
+
+	/** Send every Log4j message to the file (and nowhere else). */
+	private void useLog4jFile(Path file, boolean batched) throws IOException {
+		Path config = writeLog4jConfig(file, batched);
+		System.setProperty("log4j2.configurationFile", config.toString());
+		//  Behind System.Logger, Log4j may have started already (the JDK logs while the JVM starts): give it the file now
+		org.apache.logging.log4j.core.config.Configurator.reconfigure(config.toUri());
 	}
 
 	private Path writeLog4jConfig(Path file, boolean batched) throws IOException {
@@ -265,13 +326,13 @@ final class LoggerFixture implements AutoCloseable {
 	@Override
 	public void close() throws IOException {
 		try {
-			if( LOG4J.equals(type) ) {
+			if( LOG4J.equals(type) || BASE_OBJECT_LOG4J.equals(type) ) {
 				org.apache.logging.log4j.LogManager.shutdown();
-			} else if( LOGBACK.equals(type) ) {
+			} else if( LOGBACK.equals(type) || BASE_OBJECT_LOGBACK.equals(type) ) {
 				if( logbackContext != null ) {
 					logbackContext.stop();
 				}
-			} else if( JUL.equals(type) ) {
+			} else if( JUL.equals(type) || BASE_OBJECT_JUL.equals(type) ) {
 				if( julFlusher != null ) {
 					julFlusher.shutdownNow();
 					try {

@@ -31,7 +31,8 @@ import org.openjdk.jmh.annotations.State;
  * It runs with LoggerBenchmark (mvn -Pbenchmark test), and {@link LoggerBenchmarkRunner} prints how
  * much faster batching is for each logger.
  */
-@Fork(1)
+//  parley-logging's ParleyLoggerFinder is this JVM's System.LoggerFinder (see LoggerFixture)
+@Fork(value = 1, jvmArgsAppend = LoggerFixture.FINDER_PARLEY)
 @State(Scope.Benchmark)
 public class BatchedLoggerBenchmark extends AbstractFileLoggingBenchmark {
 
