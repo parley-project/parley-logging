@@ -41,6 +41,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+import us.bringardner.parley.core.LogContext;
 import us.bringardner.parley.core.LogLevel;
 import us.bringardner.parley.core.util.Durations;
 
@@ -50,9 +51,12 @@ import us.bringardner.parley.core.util.Durations;
  * System.err or a log file. {@link ParleyLoggerFinder} makes it the JVM's System.Logger, so that
  * BaseObject's logging (and anything else that logs through System.Logger) is written here.
  * <p>
+ * With {@value #PROPERTY_LOG_FORMAT} set to json, an entry is one JSON object on a line instead
+ * (see {@link #PROPERTY_LOG_FORMAT}), for a log store that indexes fields.
+ * <p>
  * It is not a BaseObject, so it never logs into itself. Its settings are system properties, read when
  * the logger is made: {@value #PROPERTY_LOG_FILE}, {@value #PROPERTY_LOG_FILE_MAX_SIZE},
- * {@value #PROPERTY_LOG_FILE_COUNT} and {@value #PROPERTY_LOG_FLUSH_INTERVAL}.
+ * {@value #PROPERTY_LOG_FILE_COUNT}, {@value #PROPERTY_LOG_FLUSH_INTERVAL} and {@value #PROPERTY_LOG_FORMAT}.
  */
 public class ParleyLogger implements System.Logger {
 
@@ -77,6 +81,31 @@ public class ParleyLogger implements System.Logger {
 	 * by {@link #closeLogFiles()}. Like the maximum size, the first logger to open a file decides it.
 	 */
 	public static final String PROPERTY_LOG_FLUSH_INTERVAL = "parley.log.flushInterval";
+
+	/**
+	 * How an entry is written: {@value #FORMAT_TEXT} (the default), one line of text, or
+	 * {@value #FORMAT_JSON}, one JSON object on a line, so a log store can index its fields without
+	 * parsing text. The JSON fields have the Elastic Common Schema's names, in this order:
+	 * <ol>
+	 * <li>{@code @timestamp}: the time, as in the text form (2026-11-11T06:52:03.123-05:00).</li>
+	 * <li>{@code log.level}: ERROR, WARN, INFO or DEBUG.</li>
+	 * <li>{@code message}: the message.</li>
+	 * <li>{@code ecs.version}: {@value #ECS_VERSION}.</li>
+	 * <li>{@code log.logger}: the logger's name.</li>
+	 * <li>{@code process.thread.name}: the thread that logged.</li>
+	 * <li>{@code labels.context}: the ID of the work the thread is doing (parley-core's LogContext: a
+	 *     server's session, a queued message), when it has one. BaseObject puts that ID in front of
+	 *     the message text ("[Pop3Server-4127] ..."); here it is taken out of the text.</li>
+	 * <li>{@code error.type}, {@code error.message} and {@code error.stack_trace}: an exception's class,
+	 *     message (when it has one) and stack trace, when the entry has an exception.</li>
+	 * </ol>
+	 * @since 2.0.0
+	 */
+	public static final String PROPERTY_LOG_FORMAT = "parley.log.format";
+	public static final String FORMAT_TEXT = "text";
+	public static final String FORMAT_JSON = "json";
+	/** The version of the Elastic Common Schema the JSON field names are from. */
+	public static final String ECS_VERSION = "1.2.0";
 
 	//  DateTimeFormatter is immutable and thread safe, so no locking is required.
 	private static final DateTimeFormatter SECOND_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
@@ -131,6 +160,8 @@ public class ParleyLogger implements System.Logger {
 	private volatile LogLevel level;
 	private volatile PrintStream _out;
 	private volatile PrintStream _err;
+	/** True when entries are written as JSON ({@link #PROPERTY_LOG_FORMAT}) */
+	private final boolean json;
 
 	/**
 	 * A logger that lets everything through (DEBUG), writing where {@value #PROPERTY_LOG_FILE} says.
@@ -148,6 +179,7 @@ public class ParleyLogger implements System.Logger {
 	public ParleyLogger(String name, LogLevel level) {
 		this.name = name == null ? "" : name;
 		setLevel(level);
+		this.json = parseFormat(System.getProperty(PROPERTY_LOG_FORMAT));
 		String tmp = System.getProperty(PROPERTY_LOG_FILE);
 		if( tmp != null ) {
 			tmp = tmp.trim();
@@ -251,6 +283,21 @@ public class ParleyLogger implements System.Logger {
 			}
 		}
 		return msg;
+	}
+
+	/** @return true for json, false for text, nothing or an invalid value (which is reported to System.err) */
+	private static boolean parseFormat(String value) {
+		if( value == null || value.trim().isEmpty() ) {
+			return false;
+		}
+		String tmp = value.trim();
+		if( tmp.equalsIgnoreCase(FORMAT_JSON) ) {
+			return true;
+		}
+		if( !tmp.equalsIgnoreCase(FORMAT_TEXT) ) {
+			System.err.println("Invalid "+PROPERTY_LOG_FORMAT+" ("+value+"). Using "+FORMAT_TEXT);
+		}
+		return false;
 	}
 
 	private static int parseCount(String value) {
@@ -575,10 +622,15 @@ public class ParleyLogger implements System.Logger {
 	}
 
 	protected void logMessage(LogLevel level, String msg, PrintStream out) {
-		out.println(formatMessage(level, msg));
+		out.println(json ? formatJson(level, msg, null) : formatMessage(level, msg));
 	}
 
 	private void logMessage(LogLevel level, String msg, Throwable error, PrintStream out) {
+		if( json ) {
+			//  The stack trace is inside the entry: one line, one print
+			out.println(formatJson(level, msg, error));
+			return;
+		}
 		String line = formatMessage(level, msg);
 		//  One print, so the message and stack trace stay together when several threads are logging
 		//  and a log file gets them in one write (printStackTrace writes and flushes every line).
@@ -599,5 +651,91 @@ public class ParleyLogger implements System.Logger {
 		StringBuilder ret = new StringBuilder(40 + thread.length() + lvl.length() + name.length() + (msg == null ? 4 : msg.length()));
 		appendTimestamp(ret, System.currentTimeMillis());
 		return ret.append(" [").append(thread).append("] ").append(lvl).append(' ').append(name).append(" - ").append(msg).toString();
+	}
+
+	/**
+	 * An entry as one JSON object ({@link #PROPERTY_LOG_FORMAT} lists the fields).
+	 *
+	 * @param error the entry's exception, or null
+	 */
+	private String formatJson(LogLevel level, String msg, Throwable error) {
+		String thread = Thread.currentThread().getName();
+		String text = String.valueOf(msg);
+		//  The ID of the work this thread is doing. BaseObject put it in front of the message: "[id] message"
+		String context = LogContext.get();
+		if( context != null && text.length() >= context.length() + 3 && text.charAt(0) == '['
+				&& text.startsWith(context, 1) && text.startsWith("] ", context.length() + 1) ) {
+			text = text.substring(context.length() + 3);
+		}
+		StringBuilder ret = new StringBuilder(160 + thread.length() + name.length() + text.length());
+		ret.append("{\"@timestamp\":\"");
+		appendTimestamp(ret, System.currentTimeMillis());
+		ret.append("\",\"log.level\":\"").append(level.toString()).append('"');
+		appendJsonField(ret, "message", text);
+		appendJsonField(ret, "ecs.version", ECS_VERSION);
+		appendJsonField(ret, "log.logger", name);
+		appendJsonField(ret, "process.thread.name", thread);
+		if( context != null ) {
+			appendJsonField(ret, "labels.context", context);
+		}
+		if( error != null ) {
+			appendJsonField(ret, "error.type", error.getClass().getName());
+			String errorMessage = error.getMessage();
+			if( errorMessage != null ) {
+				appendJsonField(ret, "error.message", errorMessage);
+			}
+			StringWriter trace = new StringWriter();
+			PrintWriter pw = new PrintWriter(trace);
+			error.printStackTrace(pw);
+			pw.flush();
+			appendJsonField(ret, "error.stack_trace", trace.toString());
+		}
+		return ret.append('}').toString();
+	}
+
+	/** Appends ,"name":"value" (the name is one of ours and needs no escaping). */
+	private static void appendJsonField(StringBuilder out, String name, String value) {
+		out.append(",\"").append(name).append("\":\"");
+		appendJsonText(out, value);
+		out.append('"');
+	}
+
+	/**
+	 * Appends text as the inside of a JSON string: a quote, a backslash and every control character
+	 * (a line end, a tab ...) are escaped, so an entry is always one line and valid JSON.
+	 */
+	static void appendJsonText(StringBuilder out, String text) {
+		for(int i = 0, n = text.length(); i < n; i++) {
+			char c = text.charAt(i);
+			switch (c) {
+			case '"':
+				out.append("\\\"");
+				break;
+			case '\\':
+				out.append("\\\\");
+				break;
+			case '\n':
+				out.append("\\n");
+				break;
+			case '\r':
+				out.append("\\r");
+				break;
+			case '\t':
+				out.append("\\t");
+				break;
+			default:
+				//  Other control characters, and the two Unicode line separators that some JSON readers take as line ends
+				if( c < 0x20 || c == 0x7f || c == 0x2028 || c == 0x2029 ) {
+					out.append("\\u");
+					String hex = Integer.toHexString(c);
+					for(int pad = hex.length(); pad < 4; pad++) {
+						out.append('0');
+					}
+					out.append(hex);
+				} else {
+					out.append(c);
+				}
+			}
+		}
 	}
 }
