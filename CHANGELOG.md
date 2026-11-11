@@ -2,6 +2,15 @@
 
 ## parley-logging 2.0.0 (unreleased)
 
+### Added (2026-11-11: To-Do 19.8, JSON entries)
+
+- **`parley.log.format=json`**: `ParleyLogger` writes each entry as one JSON object on a line, with
+  the Elastic Common Schema's field names (`@timestamp`, `log.level`, `message`, `ecs.version`,
+  `log.logger`, `process.thread.name`, and `error.type`, `error.message`, `error.stack_trace` for an
+  exception), so a log store can index the fields without parsing text. The thread's `LogContext`
+  ID (a session or queue ID) is a field of its own, `labels.context`, taken out of the message
+  text. `text`, the default, is unchanged. No new dependency. See the README.
+
 ### Changed (2026-11-11: To-Do 19.5, no application sets a level)
 
 - **`WARN` is every logger's default, Parley's included**: a logger named under `us.bringardner.`

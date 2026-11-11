@@ -5,3 +5,4 @@ parley.log.file
 parley.log.fileCount
 parley.log.fileMaxSize
 parley.log.flushInterval
+parley.log.format

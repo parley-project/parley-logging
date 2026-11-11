@@ -63,6 +63,7 @@ System properties, read when a logger is made:
 | `parley.log.file` | A file to append to, or `System.out` (the default) or `System.err`. Loggers that name the same file share it. |
 | `parley.log.fileMaxSize` | Start a new log file when it would grow past this size: bytes, or with a `K`, `M` or `G` suffix (`10M`). The old file is renamed `<file>.1` (the previous `.1` becomes `.2` and so on). The default is no limit. |
 | `parley.log.fileCount` | How many old log files to keep, 5 by default. With 0 the log file is started again from empty. |
+| `parley.log.format` | `text` (the default) or `json`: one JSON object on a line for each entry (see JSON entries below). |
 | `parley.log.flushInterval` | The time between writes to the log file, a duration (`500ms`). The default is 0: every entry is written as soon as it is logged. With a value (100ms to 1s is typical) entries are collected and written together, which is about ten times cheaper for a busy logger. The last entries (up to that long) are lost if the JVM is killed; they are written at a normal exit and by `ParleyLogger.closeLogFiles()`. |
 
 Entries are `yyyy-MM-dd'T'HH:mm:ss.SSS+HH:MM [thread] LEVEL name - message`, then any stack trace,
@@ -77,6 +78,36 @@ program moves or deletes the log file (logrotate, say), a new one is started und
 within a second; a file emptied in place (`copytruncate`) is written to from its new end.
 `ParleyLogger.closeLogFiles()` flushes and closes all log files so they can be moved (Windows won't
 move an open file); the next entry opens the file again.
+
+## JSON entries
+
+With `-Dparley.log.format=json` every entry is one JSON object on one line, so a log store (Elastic,
+Loki, CloudWatch and the like) can index its fields without parsing text, and a stack trace stays
+inside its entry:
+
+```json
+{"@timestamp":"2026-11-11T14:20:03.512-05:00","log.level":"INFO","message":"Login succeeded for tony","ecs.version":"1.2.0","log.logger":"us.bringardner.parley.pop3.server.Pop3Server","process.thread.name":"Pop3Server-12","labels.context":"Pop3Server-4127"}
+```
+
+The field names are the [Elastic Common Schema](https://www.elastic.co/docs/reference/ecs/logging/intro)'s,
+the ones the ECS encoders for Logback and Log4j write, so Parley's entries line up with other
+systems' in the same store:
+
+| Field | Value |
+|---|---|
+| `@timestamp` | The time, as in the text form: local time with its offset from UTC. |
+| `log.level` | `ERROR`, `WARN`, `INFO` or `DEBUG`. |
+| `message` | The message. |
+| `ecs.version` | The version of the schema the names are from. |
+| `log.logger` | The logger's name (for a Parley object, its class). |
+| `process.thread.name` | The thread that logged. |
+| `labels.context` | The ID of the work the thread is doing, when it has one: a server's session (`Pop3Server-4127`) or a queued message's ID (parley-core's `LogContext`). Filter on it to follow one connection or one message. In the text form the ID is in front of the message (`[Pop3Server-4127] Login ...`); here it is taken out of the message. |
+| `error.type`, `error.message`, `error.stack_trace` | An exception's class, its message (when it has one) and its stack trace, when the entry has an exception. |
+
+Every value is a string, and the fields are always in this order. The layout is fixed: an
+application that needs other fields or another layout can put Logback or Log4j behind `System.Logger`
+in place of parley-logging. An ID that an object puts in front of its own message while its thread
+has no `LogContext` (a connection logging outside a handler's call) stays in the message text.
 
 ## Building and testing
 
