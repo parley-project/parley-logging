@@ -84,6 +84,56 @@ move an open file); the next entry opens the file again.
 mvn verify
 ```
 
+### Logger benchmark
+
+`LoggerBenchmark` (in `src/test/java`, package `us.bringardner.parley.logging.benchmark`) is a
+[JMH](https://github.com/openjdk/jmh) benchmark of what Parley logging costs. It compares:
+
+1. `ParleyLogger`: a `ParleyLogger` called directly, as the `System.Logger` it is.
+2. `BaseObject`: a Parley object logging through `BaseObject` and the JDK's `System.Logger` to a
+   `ParleyLogger`, with `parley.log.level=INFO`. This is what Parley code does in an application
+   that includes parley-logging.
+3. `JavaUtilLogging`: `java.util.logging` called directly, which is what an application with no
+   `System.Logger` provider writes with.
+4. `BaseObjectNoLevelSet` (`NoLevelSetBenchmark`): the Parley object again with no `parley.log.level`
+   set, where the logger holds DEBUG and INFO back and looks at the settings for each such message.
+   Only the level check and the debug calls are measured.
+
+It measures level checks, debug calls when debug is off (with a constant message, a concatenated one
+and a `Supplier`), info written to a file from one thread and from four, and warn with a stack
+trace, every entry written to the file as soon as it is logged. `BatchedLoggerBenchmark` measures the
+file-writing cases again with entries collected and written together: `ParleyLogger` with
+`parley.log.flushInterval=500ms`, and `java.util.logging` with a `FileHandler` that writes every
+500 ms (`java.util.logging` has no setting for it). Run them all with
+
+```bash
+mvn -Pbenchmark test
+```
+
+It takes about 10 minutes. The benchmark profile builds in `target/benchmark` (apart from Eclipse's
+classes) and runs the benchmarks in place of the unit tests; normal builds don't run it. After JMH's
+own table it prints how the loggers compare, also saved to `target/benchmark/relative.txt`:
+
+1. Every entry written at once: for each benchmark the fastest logger is 1.00, the others multiples of its time.
+2. Batched: the same, among the batched loggers.
+3. Batched against every entry written at once: each logger's batched time divided by its own unbatched
+   time (0.25 is four times faster batched).
+
+JMH options go in `-Djmh.args` (they replace the default, which also writes
+`target/benchmark/logger-benchmark.json`). For example:
+
+```bash
+# 3 JVMs per benchmark, for steadier results with an error margin
+mvn -Pbenchmark test -Djmh.args="-f 3"
+# only the info benchmarks, 8 threads, two of the loggers
+mvn -Pbenchmark test -Djmh.args="LoggerBenchmark.info -t 8 -p loggerType=ParleyLogger,BaseObject"
+# JMH's own help
+mvn -Pbenchmark test -Djmh.args="-h"
+```
+
+Results are for comparing loggers, or one version against another, on the same machine and JDK.
+Differences under a nanosecond (the debug benchmarks) are within noise unless they hold up with `-f 3`.
+
 ## License
 
 Apache License 2.0.

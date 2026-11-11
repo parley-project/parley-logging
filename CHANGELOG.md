@@ -2,6 +2,14 @@
 
 ## parley-logging 2.0.0 (unreleased)
 
+### Added (2026-11-11: To-Do 19.4, the logger benchmark)
+
+- **Logger benchmark** (`mvn -Pbenchmark test`, JMH, test code only): parley-core's benchmark of the
+  `ILogger` implementations, brought up to date for logging through `System.Logger`. It compares a
+  `ParleyLogger` called directly, a Parley object logging through `BaseObject` and `System.Logger`
+  to a `ParleyLogger`, and `java.util.logging` called directly, every entry written at once and
+  batched; and what a debug call costs when no `parley.log.level` is set. See the README.
+
 ### Changed (2026-11-11: To-Do 19.5, no application sets a level)
 
 - **`WARN` is every logger's default, Parley's included**: a logger named under `us.bringardner.`

@@ -25,6 +25,9 @@
 		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 		<parley.moduleName>us.bringardner.parley.logging</parley.moduleName>
 		<junit.version>5.11.4</junit.version>
+		<jmh.version>1.37</jmh.version>
+		<!-- JMH options for 'mvn -Pbenchmark test' (see LoggerBenchmark) -->
+		<jmh.args>-rf json -rff ${project.build.directory}/logger-benchmark.json</jmh.args>
 	</properties>
 
 	<dependencies>
@@ -40,5 +43,73 @@
 			<version>${junit.version}</version>
 			<scope>test</scope>
 		</dependency>
+		<!-- JMH, for the benchmarks in src/test/java (LoggerBenchmark). The annotation processor that
+		     generates the benchmark code is only used by the benchmark profile, so normal builds and
+		     surefire are not affected. -->
+		<dependency>
+			<groupId>org.openjdk.jmh</groupId>
+			<artifactId>jmh-core</artifactId>
+			<version>${jmh.version}</version>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
+	<profiles>
+		<!--
+		  Performance benchmarks (JMH): mvn -Pbenchmark test
+		  Compiles the tests with JMH's annotation processor and runs the benchmarks in place of the
+		  unit tests. JMH options can be given with -Djmh.args="..." (for example -Djmh.args="-h" for help).
+		-->
+		<profile>
+			<id>benchmark</id>
+			<properties>
+				<skipTests>true</skipTests>
+				<jacoco.skip>true</jacoco.skip>
+			</properties>
+			<build>
+				<!-- A build folder of its own: Eclipse (and a normal build) compile the tests into
+				     target/test-classes without JMH's code generator, and Maven then sees them as up to
+				     date and doesn't generate the benchmark code (META-INF/BenchmarkList) -->
+				<directory>${project.basedir}/target/benchmark</directory>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-compiler-plugin</artifactId>
+						<executions>
+							<execution>
+								<id>default-testCompile</id>
+								<configuration>
+									<annotationProcessorPaths>
+										<path>
+											<groupId>org.openjdk.jmh</groupId>
+											<artifactId>jmh-generator-annprocess</artifactId>
+											<version>${jmh.version}</version>
+										</path>
+									</annotationProcessorPaths>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+					<plugin>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>exec-maven-plugin</artifactId>
+						<version>3.5.0</version>
+						<executions>
+							<execution>
+								<id>run-benchmarks</id>
+								<phase>test</phase>
+								<goals>
+									<goal>exec</goal>
+								</goals>
+								<configuration>
+									<executable>java</executable>
+									<classpathScope>test</classpathScope>
+									<commandlineArgs>-Dbenchmark.dir=${project.build.directory} -classpath %classpath us.bringardner.parley.logging.benchmark.LoggerBenchmarkRunner ${jmh.args}</commandlineArgs>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
 </project>
