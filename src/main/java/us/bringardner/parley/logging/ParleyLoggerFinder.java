@@ -67,13 +67,6 @@ public class ParleyLoggerFinder extends System.LoggerFinder {
 	 */
 	public static final LogLevel DEFAULT_LEVEL = LogLevel.WARN;
 
-	/**
-	 * The same as {@link #DEFAULT_LEVEL}, which is every logger's default now, Parley's included.
-	 * @deprecated use {@link #DEFAULT_LEVEL}
-	 */
-	@Deprecated
-	public static final LogLevel DEFAULT_OTHER_LEVEL = DEFAULT_LEVEL;
-
 	private final ConcurrentHashMap<String, ParleyLogger> loggers = new ConcurrentHashMap<>();
 
 	@Override

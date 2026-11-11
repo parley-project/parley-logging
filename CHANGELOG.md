@@ -12,7 +12,7 @@
 - A level set only with `BaseObject.setLogLevel`, or a `parley.log.level` only in an object's own
   configuration, no longer shows INFO or DEBUG by itself: the logger holds them back until a
   `parley.log.level` system property covers the object's logger.
-- `ParleyLoggerFinder.DEFAULT_LEVEL` is the default; `DEFAULT_OTHER_LEVEL` is deprecated (the same value).
+- `ParleyLoggerFinder.DEFAULT_LEVEL` is the default; it replaces `DEFAULT_OTHER_LEVEL`, which is removed.
 
 ### Changed (2026-11-11: To-Do 19.6)
 
