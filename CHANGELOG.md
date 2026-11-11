@@ -2,6 +2,18 @@
 
 ## parley-logging 2.0.0 (unreleased)
 
+### Changed (2026-11-11: To-Do 19.5, no application sets a level)
+
+- **`WARN` is every logger's default, Parley's included**: a logger named under `us.bringardner.`
+  lets everything through only when a `parley.log.level` system property covers its name (BaseObject
+  has decided with it). When none does it lets `WARN` and `ERROR` through, where it let everything
+  through before, so an application no longer sets `parley.log.level` at startup to keep DEBUG and
+  INFO out. A setting made after the logger was made counts. `ParleyLogger.setLevel` wins.
+- A level set only with `BaseObject.setLogLevel`, or a `parley.log.level` only in an object's own
+  configuration, no longer shows INFO or DEBUG by itself: the logger holds them back until a
+  `parley.log.level` system property covers the object's logger.
+- `ParleyLoggerFinder.DEFAULT_LEVEL` is the default; it replaces `DEFAULT_OTHER_LEVEL`, which is removed.
+
 ### Changed (2026-11-11: To-Do 19.6)
 
 - **ISO 8601 time stamp**: an entry starts with `yyyy-MM-dd'T'HH:mm:ss.SSS+HH:MM`, the local time with
